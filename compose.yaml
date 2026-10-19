@@ -1,0 +1,131 @@
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: medical-postgres
+
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: "0000"
+      POSTGRES_DB: hospital
+
+    ports:
+      - "127.0.0.1:5433:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: medical-rustfs
+
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+    volumes:
+      - rustfs_data:/data
+
+    command: /data
+    restart: unless-stopped
+
+  
+  # Préparation du volume du catalogue
+  iceberg-catalog-init:
+    image: busybox:1.36
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - chown 1000:1000 /catalog
+    volumes:
+      - iceberg_catalog_data:/catalog
+    restart: "no"
+
+  # Catalogue REST Apache Iceberg
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    container_name: medical-iceberg-rest
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      AWS_REGION: us-east-1
+
+      CATALOG_WAREHOUSE: s3://medical-warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://rustfs:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+
+      CATALOG_URI: "jdbc:sqlite:/catalog/iceberg_catalog.db?journal_mode=WAL"
+
+    ports:
+      - "127.0.0.1:8181:8181"
+
+    volumes:
+      - iceberg_catalog_data:/catalog
+
+    depends_on:
+      iceberg-catalog-init:
+        condition: service_completed_successfully
+      rustfs:
+        condition: service_started
+    
+    
+  spark-jupyter:
+    build:
+      context: ./docker/spark-jupyter
+
+    image: medical/spark-jupyter:3.5.5-iceberg1.10.1
+    container_name: medical-spark-jupyter
+
+    depends_on:
+      - postgres
+      - rustfs
+      - iceberg-rest
+
+    
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      AWS_REGION: us-east-1
+
+      JUPYTER_TOKEN: medical-lab-local
+      SPARK_LOCAL_IP: 127.0.0.1
+
+      HOME: /workspace
+      JUPYTER_RUNTIME_DIR: /workspace/.local/share/jupyter/runtime
+      JUPYTER_DATA_DIR: /workspace/.local/share/jupyter
+      JUPYTER_CONFIG_DIR: /workspace/.jupyter
+
+
+    ports:
+      - "127.0.0.1:8888:8888"
+
+    volumes:
+      - ./notebooks:/workspace/notebooks
+
+    restart: unless-stopped
+
+
+
+volumes:
+  postgres_data:
+  rustfs_data:
+  iceberg_catalog_data:
+  
+  
+  
