@@ -1,0 +1,8 @@
+
+# Configuration privée
+.env
+
+# Fichiers temporaires
+.Trash*
+.ipynb_checkpoints/
+__pycache__/
