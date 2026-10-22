@@ -1,0 +1,41 @@
+
+services:
+  spark-job-runner:
+    build:
+      context: ./docker/spark-jupyter
+
+    image: medical/spark-jupyter:3.5.5-iceberg1.10.1
+    container_name: medical-spark-job-runner
+
+    command:
+      - python3
+      - /workspace/notebooks/jobs/spark_job_runner.py
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_started
+      iceberg-rest:
+        condition: service_healthy
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      AWS_REGION: us-east-1
+
+      SPARK_LOCAL_IP: 127.0.0.1
+      HOME: /workspace
+
+      PG_JDBC_URL: jdbc:postgresql://postgres:5432/hospital
+      PGUSER: ${PGUSER:-user}
+      PGPASSWORD: ${PGPASSWORD:-0000}
+      PG_TABLE: public.patients_source
+
+    volumes:
+      - ./notebooks:/workspace/notebooks
+
+    expose:
+      - "8090"
+
+    restart: unless-stopped
