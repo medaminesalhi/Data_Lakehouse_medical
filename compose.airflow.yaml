@@ -1,0 +1,85 @@
+# Extension du projet medical-lakehouse.
+# Lancer avec : docker compose -f compose.yaml -f compose.airflow.yaml up -d
+# Version pédagogique épinglée d'Airflow 2.x (pas de déploiement de production).
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.5-python3.11
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://airflow:airflow_lab_password@airflow-db:5432/airflow"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "medical-airflow-secret-local-uniquement"
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags:ro
+    - airflow_logs:/opt/airflow/logs
+
+services:
+  airflow-db:
+    image: postgres:16
+    container_name: medical-airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: "airflow_lab_password"
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: medical-airflow-init
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command:
+      - -ec
+      - |
+        airflow db migrate
+        if airflow users list | grep -q -w admin; then
+          echo "Compte Airflow admin déjà présent."
+        else
+          airflow users create \
+            --username admin \
+            --password 0000 \
+            --firstname Medical \
+            --lastname Lab \
+            --role Admin \
+            --email admin@medical.local
+        fi
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: medical-airflow-webserver
+    command: webserver
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: medical-airflow-scheduler
+    command: scheduler
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  airflow_db_data: {}
+  airflow_logs: {}
